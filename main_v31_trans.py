@@ -5,70 +5,114 @@ import flopy.utils.binaryfile as bf
 from shutil import copyfile
 
 '''
+# Notes: 
+- Use conda env b3new
+- Check path to *.ccf *.out? [Check b4 submit]
+- capture.out
+- Run this from terminal: export source_path=$(pwd)
+
 ### Last updated:
 12/20/2018
 - After AGU, for the second round of UHR capture.
 - This round, transient model with one ts of 2 years.
-- three files *.inp to generate a new .WEL file.
+- 
 05/28/2020
+- Ro's model with 101 time steps
+- 
+
+### To run the codes 
+- Prepare list of input files listed below
+---- rnum_test.dat: List of all potential pmploc (submit.linux reads this file)
+---- Modify fw2.inp and fw4.inp to generate a new .WEL file. 
+     (These files are extracted from Capture_May2020.wel)
+- Choose options to run
+---- run the code once with well_withdrawl = 1 (by "python main_v31_trans.py")
+---- submit the code (by "qsub submit.linux")
 
 
-### 
+
+### If for a new project, DO:
+- Change the name of model (search Capture_May2020 and replace it by YOUR_MODEL)
+- 
+
+
+# [] Input files 
+- ID_Upper_Humboldt_River_Cells.dat to define the river location (cells).
+- river_cells.dat to define the all river cells in the model domain.
+- Change the name of Capture_May2020.wel
+
+# Run sequence
+- submit.linux
+- main_v31_trans.py
+
 
 '''
-# Input files ===============================================================
-# [1] ID_Upper_Humboldt_River_Cells.dat to define the river location (cells).
-# [2] river_cells.dat to define the all river cells in the model domain.
-# [3] Change the name of TR_NWT_forward.wel
-
-
-# Initial parameters ========================================================
+# [2] Initial parameters ======================================================
 
 feature_id = 1   # 1: River, 2:GHB; 3: All
 
-run_MODFLOW = 1  # 1: yes 0: No
+run_MODFLOW = 0  # 1: yes 0: No
 well_withdrawl = 1  # 0: before and 1: after
 
+run_path = os.getenv('source_path') + '/'
+
+# [3] Initial parameters ======================================================
 Qwell = -20000   # the rate of the new well withdrawal
-total_well = 130  # that means only one new well is added
+
+total_well = 3745+1  # 1 new well is added (See Capture_May2020.wel)
 osys = 2  # 1: Windows; 2: Linux
+
+print_river_flow_rates = 0  # 1: Print 0: No Print
+print_Qkt_after = 0   # 1:yes, print 0: no
 
 if well_withdrawl == 0:
     pumping_rate = 0  # Before well withdrawal
 #	print 'This run is for BEFORE the well withdrawal with pumping rate = 0.'
 else:
     pumping_rate = Qwell  # Before well withdrawal
-    # print 'This run is for AFTER well withdrawal with pumping rate = ', pumping_rate
-print_river_flow_rates = 0  # 1: Print 0: No Print
-print_Qkt_after = 0   # 1:yes, print 0: no
+    # print 'AFTER well withdrawal with pmp rate = ', pumping_rate
+
+# List of input files
+ifile_Humboldt_River = run_path + \
+    'input/ID_Upper_Humboldt_River_Cells.dat'  # ID of HB River cells
+ifile_rivers_cells = run_path + 'input/river_cells.dat'
+ifile_GHD_cells = run_path + 'input/GHD_cells.dat'
+ifile_rivers_n_GHD_cells = run_path + 'input/river_n_GHB.dat'
+# List of functions ===========================================================
 
 # Function to generate a new MWN2 file
+
+
 def gen_mwn2(osys, total_well, pumping_rate, nw_lay, nw_row, nw_col):
     # Open file to write the first line
     fid = open('fw1.tmp', 'w')
-    fid.write('%d  40 AUX IFACE AUX QFACT AUX CELLGRP \n' % (total_well))
+    fid.write('%d  740 AUX IFACE AUX QFACT AUX CELLGRP \n' % (total_well))
     fid.write('%d           0         0 \n' % (total_well))
     fid.close()
 
     # Write information of the new well
 
     fid = open('fw3.tmp', 'w')
-    fid.write('%d %4d %4d %4.2f %s \n' % (nw_lay, nw_row, nw_col,
-                                          pumping_rate, ' 0 1.0 130'))  # Write another line
+    fid.write('    %d %4d %4d %4.2f %s \n' % (nw_lay, nw_row, nw_col,
+                                              pumping_rate, ' 0 1.0 3746'))  # Write another line
     fid.close()
 
     # Combine all files
     if osys == 1:  # for Windows
-        os.system('copy fw1.tmp + fw2.inp + fw3.tmp  TR_NWT_forward.wel')
+        os.system('cp -f ../*.inp .')
+        os.system('copy fw1.tmp + fw2.inp + fw3.tmp + fw4.inp  Capture_May2020.wel')
         os.system('del *.tmp')
     else:  # for Linux
-        os.system('cat fw1.tmp fw2.inp fw3.tmp > TR_NWT_forward.wel')
+        os.system('cp -f ../*.inp .')
+        os.system('cat fw1.tmp fw2.inp fw3.tmp fw4.inp > Capture_May2020.wel')
         os.system('rm -f *.tmp')
 
 # FUNCTION: Read MODFLOW out file and extract information
-def get_mfoutput(nts):
+
+
+def get_mfoutput(nts, mf_out_file):
     # Get TOTAL OUT from .out file
-    with open("TR_NWT_forward.out") as f:
+    with open(mf_out_file) as f:
         c0 = 0
         c1 = 0  # count variable
         c2 = 0
@@ -116,20 +160,19 @@ def get_mfoutput(nts):
     # print 'err=',err_
     return Q_entire_domain_, err_
 
-
-# =====================================================
+# Main Program ================================================================
+# =============================================================================
 # Generate a new pumping file using data from pmploc.dat
-# =====================================================
+# =============================================================================
 
-print '   '
-print '   '
 
 # Load the new well information from pmploc.dat
 data = np.loadtxt('pmploc.dat', delimiter=None)
 # Notes: the numbers in pmploc.dat are ID,ilay,irow,icol for WEL package
+# pmploc.dat is generated after running submit.linux
 
 # Load cell IDs of the Upper Humboldt River (to get the river location)
-id_tmp = np.loadtxt('ID_Upper_Humboldt_River_Cells.dat', delimiter=None)
+id_tmp = np.loadtxt(ifile_Humboldt_River, delimiter=None)
 # print ID_HRiv_cells
 # Convert to int. Minus 1 b/c python array 0
 ID_HRiv_cells = [int(y-1) for y in id_tmp]
@@ -143,51 +186,54 @@ ofile_ccf = "out_" + str(rid) + ".ccf"
 
 gen_mwn2(osys, total_well, pumping_rate, ilay0, irow0, icol0)
 
-# =====================================================
+# =============================================================================
 # Run MODFLOW using the new well package
-# =====================================================
+# =============================================================================
 if run_MODFLOW == 1:
     if osys == 1:  # for Windows
-        os.system('MODFLOW-NWT_64.exe TR_NWT_forward.mfn')
+        os.system('MODFLOW-NWT_64.exe Capture_May2020.mfn')
     else:  # for Linux
-        os.system('./mfnwt TR_NWT_forward.mfn > omf.txt')
+        print('Running MODFLOW ... \n')
+        os.system('./mfnwt Capture_May2020.mfn > omf.txt')
         os.system('rm -f fort.*')
         # print 'Done running MODFLOW.'
 #	print 'NEW MODFLOW run!'
 else:
-    print 'No NEW MODFLOW run!'
+    print('No NEW MODFLOW run!')
 
 
-# =====================================================
+# =============================================================================
 # Read MODFLOW ccf file using flopy
-# =====================================================
+# =============================================================================
 
 # Load River Cells ID
 if feature_id == 1:
-    rcid = np.loadtxt('river_cells.dat')  # river cell id
+    rcid = np.loadtxt(ifile_rivers_cells)  # river cell id
 elif feature_id == 2:
-    rcid = np.loadtxt('GHD_cells.dat')  # river cell id
+    rcid = np.loadtxt(ifile_GHD_cells)  # river cell id
 else:
-    rcid = np.loadtxt('river_n_GHB.dat')  # river cell id
+    rcid = np.loadtxt(ifile_rivers_n_GHD_cells)  # river cell id
 
 # print rcid.shape[0]
 nFeatureCells = rcid.shape[0]
 
 # Read MODFLOW ccf file using flopy
-cbb = bf.CellBudgetFile('TR_NWT_forward.ccf')
+cbb = bf.CellBudgetFile('Capture_May2020.ccf')
 
 # list_unique_records = cbb.list_unique_records()  # Print all RECORDS
 # print 'nrecords=',cbb.get_nrecords()
 
 # Get a list of unique stress periods and time steps in the file
 list_stress_periods = cbb.get_kstpkper()
-# print 'list_stress_periods = ', cbb.get_kstpkper()
+# cbb.get_unique_record_names()
+print(f'list_stress_periods = {cbb.get_kstpkper()}\n')
+print(f'unique_record_names = {cbb.get_unique_record_names()}\n')
 
 nts = len(list_stress_periods)
 # print 'Number of stress periods = ', nts
 
-
-Q_entire_domain, err = get_mfoutput(nts)
+mf_out_file = 'Capture_May2020.out'
+Q_entire_domain, err = get_mfoutput(nts, mf_out_file)
 # print 'Q_entire_domain, err, QMWN2, Q_RVL, Q_HDB = ', Q_entire_domain, err, QMWN2, Q_RVL, Q_HDB
 #err_max = err
 # print 'Error of water budget for all time steps (L3/T) = ', err[0:nts]
@@ -203,29 +249,29 @@ n_out_rows = 10
 Qafter = np.empty([n_out_rows])  #
 Qafter_all_ts = np.empty([n_out_rows, nts])  #
 QktEachFeature_all_ts = np.empty([n_out_rows, nts])  #
-STO_all_ts = np.empty([nts])
+#STO_all_ts = np.empty([nts])
 WEL_all_ts = np.empty([nts])
 QktEachFeature = np.empty([n_out_rows])  #
 QktEachFeature_tmp = np.empty([nFeatureCells])  #
 
 
 if well_withdrawl == 1:
-    Qbefore = np.loadtxt('../model_final/Qkt_before.dat', delimiter=',')
+    ifile_Qb4 = run_path + 'model_final/Qkt_before.dat'
+    Qbefore = np.loadtxt(ifile_Qb4, delimiter=',')
     #QStbefore = np.loadtxt('../model_final/QSt_before.dat',delimiter=',')
 # print 'Qbefore = ', Qbefore.shape
 
-print ' '
+
 # print 'Testing ...'
 
 #fid = open('budget.tmp', 'w')
-fid1 = open('capture.out', 'w')
-for ts in range(nts):  # number of stress periods
-    #	print 'ts = ',ts
 
-    STO = cbb.get_data(kstpkper=(0, ts), text='STORAGE',  full3D=True)[0]
-    STO_all_ts[ts] = STO.sum()
-    QktEachFeature[0] = STO.sum()
-#	print 'STO.sum() = ', QktEachFeature[0]
+fid1 = open('capture.out', 'w')
+
+for ts in range(0, nts, 1):  # number of stress periods
+    print(f'ts = {ts}\n')
+
+    #	print 'STO.sum() = ', QktEachFeature[0]
 
     CHD = cbb.get_data(kstpkper=(0, ts), text='CONSTANT HEAD',  full3D=True)[0]
     FRF = cbb.get_data(
@@ -241,6 +287,13 @@ for ts in range(nts):  # number of stress periods
     HDB = cbb.get_data(
         kstpkper=(0, ts), text='HEAD DEP BOUNDS', full3D=True)[0]
     RCH = cbb.get_data(kstpkper=(0, ts), text='RECHARGE',       full3D=True)[0]
+
+    if ts > 0:
+        STO = cbb.get_data(kstpkper=(0, ts), text='STORAGE', full3D=True)[0]
+        #STO_all_ts[ts] = STO.sum()
+        QktEachFeature[0] = STO.sum()
+    else:
+        QktEachFeature[0] = 0
 
     # Convert masked element to zero
     #FRF = np.where(FRF.mask, 0, FRF)
@@ -273,7 +326,7 @@ for ts in range(nts):  # number of stress periods
     # [Step 3] Calculate Qkt, QSt, Delta_Qkt and Delta_STO
 
     # Get TOTAL OUT from .out file
-#	with open("TR_NWT_forward.out") as f:
+#	with open("Capture_May2020.out") as f:
 #	    for line in f:
 #	        if "TOTAL OUT" in line:
 #	             line_with_TOTAL_OUT =  line.split()
@@ -327,7 +380,7 @@ for ts in range(nts):  # number of stress periods
         #Qbefore = np.loadtxt('../model_final/Qkt_before.dat',delimiter=',')
         #QStbefore = np.loadtxt('../model_final/QSt_before.dat',delimiter=',')
         # print 'Qbefore=',Qbefore[0:2]
-        Delta_STO = Qbefore[0]-Qafter[0]
+        Delta_STO = Qbefore[0]-Qafter[0]  # Qbefore (10, 101),
         # print 'Change in storage Delta_STO = ', Delta_STO
 
         Delta_CHD = Qafter[1] - Qbefore[1]
@@ -388,34 +441,36 @@ if well_withdrawl == 0:
     np.savetxt('Qkt_before.dat', QktEachFeature_all_ts,
                delimiter=',', fmt='%9.5f')
 #	np.savetxt('QSt_before.dat', STO_all_ts, delimiter=',',fmt='%8.1f')
-    print 'Run the base scenario, no capture calculation. Existing ... '
-    exit()
+    print('Run the base scenario, no capture calculation. Existing ... ')
+    # exit()
 else:
-    print 'One new well is added'
+    print('One new well is added')
 
 #np.savetxt('Qkt_after_all.dat', Qafter_all_ts, delimiter=',',fmt='%8.4f')
 # print 'Check file capture.out for the outputs.'
 
 
+###np.savetxt('Qkt_after_all.dat', Qafter_all_ts, delimiter=',',fmt='%8.4f')
+# copyfile('Capture_May2020.ccf', ofile_ccf)  # Rename files
+# copyfile('Capture_May2020._os', ofile_os) # Rename files
+# copyfile('Capture_May2020.out', ofile_out) # Rename files
+# os.system('mv *.ccf ../all_ccf_files')  # Move to another folders
 
-#np.savetxt('Qkt_after_all.dat', Qafter_all_ts, delimiter=',',fmt='%8.4f')
-copyfile('TR_NWT_forward.ccf', ofile_ccf)  # Rename files
-# copyfile('TR_NWT_forward._os', ofile_os) # Rename files
-# copyfile('TR_NWT_forward.out', ofile_out) # Rename files
-os.system('mv *.ccf ../all_ccf_files')  # Move to another folders
+
 # os.system('mv *._os ../all_os_files')  # Move to another folders
 # os.system('mv *.out ../all_out_files')  # Move to another folders
-num = 'Elapsed run time:'
-search = open("omf.txt")
-fid2 = open('rtime.txt', 'w')
-for line in search:
-    if num in line:
-        #		line =  line.split()
-        # print line
-        #		time_ = float(line[3]) + float(line[5])/60
-        #		print time_
-        fid2.write('%s  ' % (line))
-fid2.close()
-# os.system('cat -n omf.txt | grep ''^ *15'' > rtime.txt')  # Move to another folders
-# Move to another folders
-os.system('cat rtime.txt >> ../all_model_run_time.txt')
+if os.path.isfile("omf.txt"):
+    num = 'Elapsed run time:'
+    search = open("omf.txt")
+    fid2 = open('rtime.txt', 'w')
+    for line in search:
+        if num in line:
+            #		line =  line.split()
+            # print line
+            #		time_ = float(line[3]) + float(line[5])/60
+            #		print time_
+            fid2.write('%s  ' % (line))
+    fid2.close()
+    # os.system('cat -n omf.txt | grep ''^ *15'' > rtime.txt')  # Move to another folders
+    # Move to another folders
+    os.system('cat rtime.txt >> ../all_model_run_time.txt')
